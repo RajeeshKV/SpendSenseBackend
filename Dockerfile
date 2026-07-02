@@ -11,7 +11,7 @@ COPY . .
 RUN dotnet publish src/SpendSense.Api/SpendSense.Api.csproj -c Release -o /app/publish --no-restore
 RUN dotnet tool install --global dotnet-ef --version 8.*
 ENV PATH="$PATH:/root/.dotnet/tools"
-RUN dotnet ef migrations bundle --self-contained false -r linux-x64 --project src/SpendSense.Infrastructure/SpendSense.Infrastructure.csproj --startup-project src/SpendSense.Api/SpendSense.Api.csproj -o /app/publish/migrate
+RUN dotnet ef migrations bundle --no-self-contained -r linux-x64 --configuration Release --project src/SpendSense.Infrastructure/SpendSense.Infrastructure.csproj --startup-project src/SpendSense.Api/SpendSense.Api.csproj -o /app/publish/migrate
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
 WORKDIR /app
