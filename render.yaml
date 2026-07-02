@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: spendsense-api
+    env: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: RUN_EF_MIGRATIONS
+        value: true

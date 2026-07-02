@@ -1,0 +1,13 @@
+bin/
+obj/
+.vs/
+.idea/
+*.user
+*.suo
+TestResults/
+coverage/
+uploads/
+.env
+.env.*
+!*.env.example
+artifacts/
