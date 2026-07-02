@@ -6,7 +6,7 @@ COPY src/SpendSense.Application/SpendSense.Application.csproj src/SpendSense.App
 COPY src/SpendSense.Domain/SpendSense.Domain.csproj src/SpendSense.Domain/
 COPY src/SpendSense.Infrastructure/SpendSense.Infrastructure.csproj src/SpendSense.Infrastructure/
 COPY src/SpendSense.Shared/SpendSense.Shared.csproj src/SpendSense.Shared/
-RUN dotnet restore SpendSense.sln
+RUN dotnet restore src/SpendSense.Api/SpendSense.Api.csproj
 COPY . .
 RUN dotnet publish src/SpendSense.Api/SpendSense.Api.csproj -c Release -o /app/publish --no-restore
 RUN dotnet tool install --global dotnet-ef --version 8.*
