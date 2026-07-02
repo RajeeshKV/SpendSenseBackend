@@ -24,12 +24,23 @@ public sealed class DashboardService(IAppDbContext db) : IDashboardService
         return new DashboardSummary(spend, income, income - spend, categories.FirstOrDefault()?.Category, categories, monthly, merchants);
     }
 
-    public async Task<IReadOnlyList<CategorySpend>> CategoriesAsync(Guid userId, CancellationToken cancellationToken = default) =>
-        await db.Transactions.Where(x => x.UserId == userId && x.DebitCredit == DebitCredit.Debit)
-            .GroupBy(x => new { x.CategoryId, Category = x.Category == null ? "Uncategorized" : x.Category.Name })
-            .Select(x => new CategorySpend(x.Key.CategoryId, x.Key.Category, x.Sum(t => t.Amount)))
+    public async Task<IReadOnlyList<CategorySpend>> CategoriesAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var totals = db.Transactions
+            .Where(x => x.UserId == userId && x.DebitCredit == DebitCredit.Debit)
+            .GroupBy(x => x.CategoryId)
+            .Select(x => new { CategoryId = x.Key, Amount = x.Sum(t => t.Amount) });
+
+        return await (from total in totals
+                join category in db.Categories on total.CategoryId equals (Guid?)category.Id into categories
+                from category in categories.DefaultIfEmpty()
+                select new CategorySpend(
+                    total.CategoryId,
+                    category == null ? "Uncategorized" : category.Name,
+                    total.Amount))
             .OrderByDescending(x => x.Amount)
             .ToListAsync(cancellationToken);
+    }
 
     public async Task<IReadOnlyList<MonthlySpend>> MonthlyAsync(Guid userId, CancellationToken cancellationToken = default) =>
         await db.Transactions.Where(x => x.UserId == userId)

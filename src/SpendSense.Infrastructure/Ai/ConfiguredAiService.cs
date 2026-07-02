@@ -10,9 +10,19 @@ public sealed class ConfiguredAiService(IAppDbContext db, IOptions<AiOptions> op
 {
     public async Task<string> GenerateInsightsAsync(Guid userId, CancellationToken cancellationToken = default)
     {
-        var categoryTotals = await db.Transactions.Where(x => x.UserId == userId && x.DebitCredit == DebitCredit.Debit)
-            .GroupBy(x => x.Category == null ? "Uncategorized" : x.Category.Name)
-            .Select(x => new { Category = x.Key, Amount = x.Sum(t => t.Amount) })
+        var totals = db.Transactions
+            .Where(x => x.UserId == userId && x.DebitCredit == DebitCredit.Debit)
+            .GroupBy(x => x.CategoryId)
+            .Select(x => new { CategoryId = x.Key, Amount = x.Sum(t => t.Amount) });
+
+        var categoryTotals = await (from total in totals
+                join category in db.Categories on total.CategoryId equals (Guid?)category.Id into categories
+                from category in categories.DefaultIfEmpty()
+                select new
+                {
+                    Category = category == null ? "Uncategorized" : category.Name,
+                    total.Amount
+                })
             .OrderByDescending(x => x.Amount)
             .Take(5)
             .ToListAsync(cancellationToken);
