@@ -15,11 +15,15 @@ Configure these in Render before deploying.
 
 | Variable | Example | Purpose |
 | --- | --- | --- |
-| `Cors__AllowedOrigins__0` | `https://your-frontend.vercel.app` | Frontend origin allowed to call the API. Add `__1`, `__2` for more. |
+| `Cors__AllowedOriginsCsv` | `https://your-frontend.vercel.app,https://admin.yourdomain.com` | Comma-separated frontend origins allowed to call the API. Easier on Render than indexed array variables. |
 | `RUN_EF_MIGRATIONS` | `true` | Runs the bundled EF migration before app start. |
-| `Storage__MaxUploadBytes` | `10485760` | Max statement upload size. |
+| `Storage__MaxUploadBytes` | `10485760` | Max statement upload size. Defaults to 10 MB when omitted. |
+| `Storage__Provider` | `Supabase` | Primary storage provider: `Supabase`, `Cloudinary`, or `Local`. |
+| `Storage__BackupProvider` | `Cloudinary` | Backup provider used if the primary provider is unavailable. |
 
 ## Supabase Storage
+
+Supabase File Storage currently includes a 1 GB quota on the Free plan. At the app default of 10 MB per statement, that is roughly 100 max-size files before storage quota pressure, not counting database and other Supabase limits.
 
 | Variable | Purpose |
 | --- | --- |
@@ -27,7 +31,24 @@ Configure these in Render before deploying.
 | `Supabase__ServiceRoleKey` | Service role key for storage operations. |
 | `Supabase__StorageBucket` | Statement upload bucket, defaults to `statements`. |
 
-The current implementation saves uploads locally as a safe fallback. Replace `LocalStorageService` with a Supabase adapter when storage credentials are ready.
+## Cloudinary Backup Storage
+
+Use Cloudinary as a backup or primary file store by setting `Storage__BackupProvider=Cloudinary` or `Storage__Provider=Cloudinary`.
+
+| Variable | Purpose |
+| --- | --- |
+| `Cloudinary__CloudName` | Cloudinary cloud name. |
+| `Cloudinary__ApiKey` | Cloudinary API key. |
+| `Cloudinary__ApiSecret` | Cloudinary API secret. |
+| `Cloudinary__Folder` | Folder for uploaded statements, defaults to `spendsense/statements`. |
+
+## Local Development Storage
+
+| Variable | Purpose |
+| --- | --- |
+| `Storage__LocalPath` | Local upload directory when `Storage__Provider=Local`. Defaults to `uploads`. |
+
+Do not use local storage as the production provider on Render because the filesystem is ephemeral.
 
 ## Brevo Email
 

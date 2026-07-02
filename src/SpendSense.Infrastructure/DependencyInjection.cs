@@ -23,6 +23,7 @@ public static class DependencyInjection
         services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.SectionName));
         services.Configure<BrevoOptions>(configuration.GetSection(BrevoOptions.SectionName));
         services.Configure<SupabaseOptions>(configuration.GetSection(SupabaseOptions.SectionName));
+        services.Configure<CloudinaryOptions>(configuration.GetSection(CloudinaryOptions.SectionName));
         services.Configure<AiOptions>(configuration.GetSection(AiOptions.SectionName));
         services.Configure<StorageOptions>(configuration.GetSection(StorageOptions.SectionName));
         services.Configure<CorsOptions>(configuration.GetSection(CorsOptions.SectionName));
@@ -35,7 +36,12 @@ public static class DependencyInjection
         services.AddScoped<IPasswordService, PasswordService>();
         services.AddScoped<ITokenService, TokenService>();
         services.AddScoped<IEmailService, BrevoEmailService>();
-        services.AddScoped<IStorageService, LocalStorageService>();
+        services.AddHttpClient<SupabaseStorageProvider>();
+        services.AddHttpClient<CloudinaryStorageProvider>();
+        services.AddScoped<IStorageProvider>(sp => sp.GetRequiredService<SupabaseStorageProvider>());
+        services.AddScoped<IStorageProvider>(sp => sp.GetRequiredService<CloudinaryStorageProvider>());
+        services.AddScoped<IStorageProvider, LocalStorageProvider>();
+        services.AddScoped<IStorageService, ResilientStorageService>();
         services.AddScoped<IAiService, ConfiguredAiService>();
         services.AddScoped<IStatementParser, CsvStatementParser>();
         services.AddHostedService<SpendSenseMaintenanceService>();
@@ -65,3 +71,4 @@ public static class DependencyInjection
         return services;
     }
 }
+

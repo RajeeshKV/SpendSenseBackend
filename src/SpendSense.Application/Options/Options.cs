@@ -30,6 +30,15 @@ public sealed class SupabaseOptions
     public string StorageBucket { get; set; } = "statements";
 }
 
+public sealed class CloudinaryOptions
+{
+    public const string SectionName = "Cloudinary";
+    public string CloudName { get; set; } = string.Empty;
+    public string ApiKey { get; set; } = string.Empty;
+    public string ApiSecret { get; set; } = string.Empty;
+    public string Folder { get; set; } = "spendsense/statements";
+}
+
 public sealed class AiOptions
 {
     public const string SectionName = "AI";
@@ -42,12 +51,20 @@ public sealed class AiOptions
 public sealed class StorageOptions
 {
     public const string SectionName = "Storage";
-    public long MaxUploadBytes { get; set; } = 10 * 1024 * 1024;
+    public const long DefaultMaxUploadBytes = 10 * 1024 * 1024;
+    public long MaxUploadBytes { get; set; } = DefaultMaxUploadBytes;
+    public string Provider { get; set; } = "Supabase";
+    public string BackupProvider { get; set; } = "Cloudinary";
     public string LocalPath { get; set; } = "uploads";
 }
 
 public sealed class CorsOptions
 {
     public const string SectionName = "Cors";
-    public string[] AllowedOrigins { get; set; } = Array.Empty<string>();
+    public string AllowedOriginsCsv { get; set; } = string.Empty;
+
+    public string[] AllowedOrigins => AllowedOriginsCsv
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
 }
