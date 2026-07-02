@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Logging;
@@ -21,6 +22,7 @@ internal sealed class ResilientStorageService(IEnumerable<IStorageProvider> prov
     {
         var orderedProviders = ResolveProviders().ToList();
         Exception? lastError = null;
+        var payload = await ReadPayloadAsync(content, cancellationToken);
 
         foreach (var provider in orderedProviders)
         {
@@ -32,8 +34,8 @@ internal sealed class ResilientStorageService(IEnumerable<IStorageProvider> prov
 
             try
             {
-                if (content.CanSeek) content.Position = 0;
-                return await provider.SaveAsync(content, fileName, contentType, cancellationToken);
+                await using var providerStream = new MemoryStream(payload, writable: false);
+                return await provider.SaveAsync(providerStream, fileName, contentType, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -62,6 +64,14 @@ internal sealed class ResilientStorageService(IEnumerable<IStorageProvider> prov
             var provider = providers.FirstOrDefault(x => x.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
             if (provider is not null) yield return provider;
         }
+    }
+
+    private static async Task<byte[]> ReadPayloadAsync(Stream content, CancellationToken cancellationToken)
+    {
+        if (content.CanSeek) content.Position = 0;
+        using var buffer = new MemoryStream();
+        await content.CopyToAsync(buffer, cancellationToken);
+        return buffer.ToArray();
     }
 }
 
@@ -104,7 +114,11 @@ internal sealed class SupabaseStorageProvider(HttpClient httpClient, IOptions<Su
         request.Content = new StreamContent(content);
         request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(string.IsNullOrWhiteSpace(contentType) ? "application/octet-stream" : contentType);
         using var response = await httpClient.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new HttpRequestException($"Supabase upload failed with {(int)response.StatusCode} {response.StatusCode}: {body}", null, response.StatusCode);
+        }
         return $"Supabase:{settings.StorageBucket}/{safeName}";
     }
 
@@ -119,7 +133,8 @@ internal sealed class CloudinaryStorageProvider(HttpClient httpClient, IOptions<
     public async Task<string> SaveAsync(Stream content, string fileName, string contentType, CancellationToken cancellationToken = default)
     {
         var settings = options.Value;
-        var publicId = $"{Path.GetFileNameWithoutExtension(fileName)}-{Guid.NewGuid():N}";
+        var extension = Path.GetExtension(fileName);
+        var publicId = $"{SanitizePublicId(Path.GetFileNameWithoutExtension(fileName))}-{Guid.NewGuid():N}{extension}";
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
         var signaturePayload = $"folder={settings.Folder}&public_id={publicId}&timestamp={timestamp}&type=authenticated{settings.ApiSecret}";
         var signature = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(signaturePayload))).ToLowerInvariant();
@@ -138,10 +153,24 @@ internal sealed class CloudinaryStorageProvider(HttpClient httpClient, IOptions<
         form.Add(fileContent, "file", fileName);
 
         using var response = await httpClient.PostAsync($"https://api.cloudinary.com/v1_1/{settings.CloudName}/raw/upload", form, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new HttpRequestException($"Cloudinary upload failed with {(int)response.StatusCode} {response.StatusCode}: {body}", null, response.StatusCode);
+        }
         return $"Cloudinary:{settings.Folder}/{publicId}";
     }
 
     public Task DeleteAsync(string storagePath, CancellationToken cancellationToken = default) => Task.CompletedTask;
-}
 
+    private static string SanitizePublicId(string value)
+    {
+        var builder = new StringBuilder(value.Length);
+        foreach (var ch in value.Trim())
+        {
+            builder.Append(char.IsLetterOrDigit(ch) || ch is '-' or '_' ? ch : '-');
+        }
+        var result = builder.ToString().Trim('-');
+        return string.IsNullOrWhiteSpace(result) ? "statement" : result;
+    }
+}
