@@ -37,9 +37,8 @@ public static class DependencyInjection
         services.AddScoped<ITokenService, TokenService>();
         services.AddScoped<IEmailService, BrevoEmailService>();
         services.AddHttpClient<SupabaseStorageProvider>();
-        services.AddHttpClient<CloudinaryStorageProvider>();
         services.AddScoped<IStorageProvider>(sp => sp.GetRequiredService<SupabaseStorageProvider>());
-        services.AddScoped<IStorageProvider>(sp => sp.GetRequiredService<CloudinaryStorageProvider>());
+        services.AddScoped<IStorageProvider, CloudinaryStorageProvider>();
         services.AddScoped<IStorageProvider, LocalStorageProvider>();
         services.AddScoped<IStorageService, ResilientStorageService>();
         services.AddScoped<IAiService, ConfiguredAiService>();
@@ -71,4 +70,5 @@ public static class DependencyInjection
         return services;
     }
 }
+
 

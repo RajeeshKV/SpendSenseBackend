@@ -21,7 +21,6 @@ builder.Services.AddFluentValidationAutoValidation();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddProblemDetails();
-builder.Services.AddHealthChecks();
 builder.Services.AddRateLimiter(options => options.AddFixedWindowLimiter("api", limiter =>
 {
     limiter.PermitLimit = 120;
@@ -43,16 +42,15 @@ app.UseMiddleware<ExceptionMiddleware>();
 app.UseSerilogRequestLogging();
 app.UseSwagger();
 app.UseSwaggerUI();
-app.UseHttpsRedirection();
 app.UseCors("Default");
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
-app.MapGet("/", () => Results.Ok(new { name = "SpendSense API", status = "Live", swagger = "/swagger", health = "/health" }));
-app.MapHealthChecks("/health");
+app.MapMethods("/", new[] { "GET", "HEAD" }, () => Results.Ok(new { name = "SpendSense API", status = "Live", swagger = "/swagger", health = "/health" }));
 app.MapControllers().RequireRateLimiting("api");
 app.Run();
 
 public partial class Program;
+
 
 
