@@ -10,22 +10,30 @@ public sealed class ConfiguredAiService(IAppDbContext db, IOptions<AiOptions> op
 {
     public async Task<string> GenerateInsightsAsync(Guid userId, CancellationToken cancellationToken = default)
     {
-        var totals = db.Transactions
+        var totals = await db.Transactions
             .Where(x => x.UserId == userId && x.DebitCredit == DebitCredit.Debit)
             .GroupBy(x => x.CategoryId)
-            .Select(x => new { CategoryId = x.Key, Amount = x.Sum(t => t.Amount) });
-
-        var categoryTotals = await (from total in totals
-                join category in db.Categories on total.CategoryId equals (Guid?)category.Id into categories
-                from category in categories.DefaultIfEmpty()
-                select new
-                {
-                    Category = category == null ? "Uncategorized" : category.Name,
-                    total.Amount
-                })
+            .Select(x => new { CategoryId = x.Key, Amount = x.Sum(t => t.Amount) })
             .OrderByDescending(x => x.Amount)
             .Take(5)
             .ToListAsync(cancellationToken);
+
+        var categoryIds = totals
+            .Where(x => x.CategoryId.HasValue)
+            .Select(x => x.CategoryId!.Value)
+            .Distinct()
+            .ToList();
+        var categories = await db.Categories
+            .Where(x => categoryIds.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, x => x.Name, cancellationToken);
+
+        var categoryTotals = totals
+            .Select(x => new
+            {
+                Category = x.CategoryId.HasValue && categories.TryGetValue(x.CategoryId.Value, out var category) ? category : "Uncategorized",
+                x.Amount
+            })
+            .ToList();
 
         if (string.IsNullOrWhiteSpace(options.Value.ApiKey))
         {
