@@ -9,15 +9,18 @@ namespace SpendSense.Api.Controllers;
 public sealed class StatementsController(IStatementService statements) : ApiControllerBase
 {
     [HttpPost("upload")]
-    [RequestSizeLimit(25_000_000)]
+    [RequestSizeLimit(10_485_760)]
     public async Task<ActionResult<ApiResponse<StatementResponse>>> Upload(IFormFile file, [FromForm] Guid accountId, [FromForm] string accountName, [FromForm] string bankName, [FromForm] AccountType accountType, CancellationToken cancellationToken)
     {
         await using var stream = file.OpenReadStream();
         var request = new StatementUploadRequest(accountId, accountName, bankName, accountType);
         var result = await statements.UploadAsync(UserId, request, stream, file.FileName, file.ContentType, file.Length, cancellationToken);
-        var message = result.ParseStatus == "Completed"
-            ? "Statement uploaded and parsed."
-            : "Statement uploaded, but parsing failed. Check failureReason for details.";
+        var message = result.ParseStatus switch
+        {
+            "Completed" => "Statement uploaded and parsed.",
+            "Processing" => "Statement uploaded and queued for background AI processing.",
+            _ => "Statement uploaded, but parsing failed. Check failureReason for details."
+        };
         return Envelope(result, message);
     }
 
@@ -33,3 +36,5 @@ public sealed class StatementsController(IStatementService statements) : ApiCont
     [HttpDelete("{id:guid}")]
     public async Task<ActionResult<ApiResponse<object>>> Delete(Guid id, CancellationToken cancellationToken) { await statements.DeleteAsync(UserId, id, cancellationToken); return EmptyEnvelope("Statement deleted."); }
 }
+
+

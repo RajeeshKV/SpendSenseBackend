@@ -12,6 +12,7 @@ internal interface IStorageProvider
     string Name { get; }
     bool IsConfigured { get; }
     Task<string> SaveAsync(Stream content, string fileName, string contentType, CancellationToken cancellationToken = default);
+    Task<Stream> OpenReadAsync(string storagePath, CancellationToken cancellationToken = default);
     Task DeleteAsync(string storagePath, CancellationToken cancellationToken = default);
 }
 
@@ -44,6 +45,14 @@ internal sealed class ResilientStorageService(IEnumerable<IStorageProvider> prov
         }
 
         throw new InvalidOperationException("No configured storage provider was able to save the file.", lastError);
+    }
+
+    public async Task<Stream> OpenReadAsync(string storagePath, CancellationToken cancellationToken = default)
+    {
+        var providerName = storagePath.Split(':', 2)[0];
+        var provider = providers.FirstOrDefault(x => x.Name.Equals(providerName, StringComparison.OrdinalIgnoreCase));
+        if (provider is null) throw new InvalidOperationException($"Storage provider '{providerName}' is not registered.");
+        return await provider.OpenReadAsync(storagePath, cancellationToken);
     }
 
     public async Task DeleteAsync(string storagePath, CancellationToken cancellationToken = default)
@@ -89,6 +98,12 @@ internal sealed class LocalStorageProvider(IOptions<StorageOptions> options) : I
         return $"Local:{path.Replace('\\', '/')}";
     }
 
+    public Task<Stream> OpenReadAsync(string storagePath, CancellationToken cancellationToken = default)
+    {
+        var path = storagePath.StartsWith("Local:", StringComparison.OrdinalIgnoreCase) ? storagePath[6..] : storagePath;
+        return Task.FromResult<Stream>(File.OpenRead(path));
+    }
+
     public Task DeleteAsync(string storagePath, CancellationToken cancellationToken = default)
     {
         var path = storagePath.StartsWith("Local:", StringComparison.OrdinalIgnoreCase) ? storagePath[6..] : storagePath;
@@ -121,10 +136,29 @@ internal sealed class SupabaseStorageProvider(HttpClient httpClient, IOptions<Su
         return $"Supabase:{settings.StorageBucket}/{safeName}";
     }
 
+    public async Task<Stream> OpenReadAsync(string storagePath, CancellationToken cancellationToken = default)
+    {
+        var settings = options.Value;
+        var objectPath = storagePath.StartsWith("Supabase:", StringComparison.OrdinalIgnoreCase) ? storagePath[9..] : storagePath;
+        var url = $"{settings.Url.TrimEnd('/')}/storage/v1/object/{objectPath}";
+        using var request = new HttpRequestMessage(System.Net.Http.HttpMethod.Get, url);
+        request.Headers.TryAddWithoutValidation("apikey", settings.ServiceRoleKey);
+        request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {settings.ServiceRoleKey}");
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new HttpRequestException($"Supabase download failed with {(int)response.StatusCode} {response.StatusCode}: {body}", null, response.StatusCode);
+        }
+
+        var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        return new MemoryStream(bytes, writable: false);
+    }
+
     public Task DeleteAsync(string storagePath, CancellationToken cancellationToken = default) => Task.CompletedTask;
 }
 
-internal sealed class CloudinaryStorageProvider(IOptions<CloudinaryOptions> options) : IStorageProvider
+internal sealed class CloudinaryStorageProvider(HttpClient httpClient, IOptions<CloudinaryOptions> options) : IStorageProvider
 {
     private readonly CloudinaryOptions _options = options.Value;
 
@@ -152,9 +186,21 @@ internal sealed class CloudinaryStorageProvider(IOptions<CloudinaryOptions> opti
             throw new InvalidOperationException($"Cloudinary upload failed: {result.Error.Message}");
         }
 
-        return $"Cloudinary:{result.PublicId}";
+        var readableLocation = result.SecureUrl?.AbsoluteUri ?? result.Url?.AbsoluteUri ?? result.PublicId;
+        return $"Cloudinary:{readableLocation}";
+    }
+
+    public async Task<Stream> OpenReadAsync(string storagePath, CancellationToken cancellationToken = default)
+    {
+        var location = storagePath.StartsWith("Cloudinary:", StringComparison.OrdinalIgnoreCase) ? storagePath[11..] : storagePath;
+        if (!Uri.TryCreate(location, UriKind.Absolute, out var uri))
+        {
+            throw new InvalidOperationException("This Cloudinary file was saved before readable URLs were stored. Re-upload the statement to process it asynchronously.");
+        }
+
+        var bytes = await httpClient.GetByteArrayAsync(uri, cancellationToken);
+        return new MemoryStream(bytes, writable: false);
     }
 
     public Task DeleteAsync(string storagePath, CancellationToken cancellationToken = default) => Task.CompletedTask;
 }
-

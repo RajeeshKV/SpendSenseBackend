@@ -20,4 +20,9 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SpendSense.Infrastructure\SpendSense.Infrastructure.csproj" />
+  </ItemGroup>
+
 </Project>
+

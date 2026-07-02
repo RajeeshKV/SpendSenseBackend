@@ -1,7 +1,4 @@
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SpendSense.Application.Abstractions;
 using SpendSense.Application.Options;
@@ -18,7 +15,7 @@ public interface IStatementService
     Task DeleteAsync(Guid userId, Guid statementId, CancellationToken cancellationToken = default);
 }
 
-public sealed class StatementService(IAppDbContext db, IStorageService storage, IEnumerable<IStatementParser> parsers, IOptions<StorageOptions> storageOptions, ILogger<StatementService> logger) : IStatementService
+public sealed class StatementService(IAppDbContext db, IStorageService storage, IOptions<StorageOptions> storageOptions) : IStatementService
 {
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -39,14 +36,16 @@ public sealed class StatementService(IAppDbContext db, IStorageService storage, 
             account = new Account { UserId = userId, AccountName = request.AccountName, BankName = request.BankName, AccountType = request.AccountType };
             db.Accounts.Add(account);
         }
+        else if (!string.IsNullOrWhiteSpace(request.BankName) && !account.BankName.Equals(request.BankName, StringComparison.OrdinalIgnoreCase))
+        {
+            account.BankName = request.BankName;
+        }
 
         await using var memory = new MemoryStream();
         await file.CopyToAsync(memory, cancellationToken);
         memory.Position = 0;
         var storagePath = await storage.SaveAsync(memory, fileName, contentType, cancellationToken);
-        memory.Position = 0;
 
-        var matchingParsers = parsers.Where(x => x.CanParse(fileName, contentType)).ToArray();
         var statement = new Statement
         {
             UserId = userId,
@@ -55,52 +54,12 @@ public sealed class StatementService(IAppDbContext db, IStorageService storage, 
             StoragePath = storagePath,
             ContentType = contentType,
             SizeBytes = length,
-            ParseStatus = matchingParsers.Length == 0 ? StatementParseStatus.Failed : StatementParseStatus.Processing,
-            FailureReason = matchingParsers.Length == 0 ? "No parser is configured for this file type. Enable AI statement parsing for scanned/unknown formats." : null
+            ParseStatus = StatementParseStatus.Processing,
+            ParserName = "Queued",
+            FailureReason = null
         };
         db.Statements.Add(statement);
         await db.SaveChangesAsync(cancellationToken);
-
-        if (matchingParsers.Length > 0)
-        {
-            var attempts = new List<string>();
-            foreach (var parser in matchingParsers)
-            {
-                memory.Position = 0;
-                var detectedBank = "Unknown";
-                try
-                {
-                    detectedBank = parser.DetectBank(fileName, memory);
-                    memory.Position = 0;
-                    logger.LogInformation("Trying statement parser {ParserName} for file {FileName}. Detected bank: {DetectedBank}.", parser.Name, fileName, detectedBank);
-                    var parsed = await parser.ParseAsync(memory, cancellationToken);
-                    if (parsed.Count == 0)
-                    {
-                        attempts.Add($"{parser.Name}:{detectedBank} extracted 0 transactions");
-                        continue;
-                    }
-
-                    var inserted = await InsertTransactionsAsync(userId, account.Id, statement.Id, parsed, cancellationToken);
-                    statement.ParseStatus = inserted == 0 ? StatementParseStatus.Failed : StatementParseStatus.Completed;
-                    statement.ParserName = $"{parser.Name}:{detectedBank}";
-                    statement.FailureReason = inserted == 0 ? $"{parser.Name} extracted transactions, but all were duplicates already imported." : null;
-                    statement.ModifiedOnUtc = DateTime.UtcNow;
-                    logger.LogInformation("Statement {StatementId} parsed with {TransactionCount} transactions using {ParserName}.", statement.Id, inserted, parser.Name);
-                    await db.SaveChangesAsync(cancellationToken);
-                    return await GetAsync(userId, statement.Id, cancellationToken);
-                }
-                catch (Exception ex)
-                {
-                    attempts.Add($"{parser.Name}:{detectedBank} failed: {ex.Message}");
-                    logger.LogWarning(ex, "Statement parser {ParserName} failed for statement {StatementId} ({FileName}). Trying next parser.", parser.Name, statement.Id, fileName);
-                }
-            }
-
-            statement.ParseStatus = StatementParseStatus.Failed;
-            statement.FailureReason = "Unable to extract transactions. Attempts: " + string.Join("; ", attempts);
-            statement.ModifiedOnUtc = DateTime.UtcNow;
-            await db.SaveChangesAsync(cancellationToken);
-        }
 
         return await GetAsync(userId, statement.Id, cancellationToken);
     }
@@ -123,42 +82,5 @@ public sealed class StatementService(IAppDbContext db, IStorageService storage, 
         statement.ModifiedOnUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
         await storage.DeleteAsync(statement.StoragePath, cancellationToken);
-    }
-
-    private async Task<int> InsertTransactionsAsync(Guid userId, Guid accountId, Guid statementId, IReadOnlyList<ParsedTransaction> parsed, CancellationToken cancellationToken)
-    {
-        var inserted = 0;
-        foreach (var item in parsed)
-        {
-            var merchant = NormalizeMerchant(item.Merchant);
-            var mapping = await db.MerchantMappings.Include(x => x.Category).FirstOrDefaultAsync(x => x.UserId == userId && x.Merchant == merchant, cancellationToken);
-            var hash = CreateHash(userId, accountId, item.Date, item.Amount, merchant, item.Description);
-            if (await db.Transactions.AnyAsync(x => x.Hash == hash, cancellationToken)) continue;
-            db.Transactions.Add(new Transaction
-            {
-                UserId = userId,
-                StatementId = statementId,
-                AccountId = accountId,
-                Date = item.Date,
-                Description = item.Description,
-                Merchant = mapping?.NormalizedMerchant ?? merchant,
-                Amount = item.Amount,
-                DebitCredit = item.DebitCredit,
-                CategoryId = mapping?.CategoryId,
-                ConfidenceScore = mapping is null ? null : 1m,
-                Hash = hash
-            });
-            inserted++;
-        }
-
-        return inserted;
-    }
-
-    private static string NormalizeMerchant(string merchant) => string.Join(' ', merchant.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries));
-
-    private static string CreateHash(Guid userId, Guid accountId, DateOnly date, decimal amount, string merchant, string description)
-    {
-        var input = $"{userId:N}|{accountId:N}|{date:yyyy-MM-dd}|{amount:0.00}|{merchant.ToUpperInvariant()}|{description.ToUpperInvariant()}";
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input))).ToLowerInvariant();
     }
 }

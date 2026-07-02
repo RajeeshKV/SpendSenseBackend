@@ -11,8 +11,8 @@ internal static partial class StatementParsingSupport
 {
     private static readonly BankSignature[] BankSignatures =
     [
-        new("HDFC Bank", ["hdfc", "hdfcbank"]),
         new("ICICI Bank", ["icici", "icicibank"]),
+        new("HDFC Bank", ["hdfc", "hdfcbank"]),
         new("State Bank of India", ["sbi", "statebankofindia", "state bank of india"]),
         new("Axis Bank", ["axis", "axisbank"]),
         new("Kotak Mahindra Bank", ["kotak", "kotakmahindra"]),
@@ -46,10 +46,10 @@ internal static partial class StatementParsingSupport
         "transactiondetails", "transaction details", "remarks", "payee", "merchant", "memo", "name"
     ];
 
-    internal static readonly string[] MerchantColumns = ["merchant", "payee", "name", "description", "narration", "particulars", "details"];
-    internal static readonly string[] AmountColumns = ["amount", "transactionamount", "transaction amount", "amt"];
-    internal static readonly string[] DebitColumns = ["debit", "withdrawal", "withdrawalamt", "withdrawal amt", "withdrawal amount", "debitamount", "debit amount", "dr", "paidout"];
-    internal static readonly string[] CreditColumns = ["credit", "deposit", "depositamt", "deposit amt", "deposit amount", "creditamount", "credit amount", "cr", "paidin"];
+    internal static readonly string[] MerchantColumns = ["merchant", "payee", "name", "description", "narration", "particulars", "details", "transactionremarks", "transaction remarks"];
+    internal static readonly string[] AmountColumns = ["amount", "transactionamount", "transaction amount", "amountinr", "amount inr", "amt"];
+    internal static readonly string[] DebitColumns = ["debit", "withdrawal", "withdrawalamt", "withdrawal amt", "withdrawal amount", "withdrawalamountinr", "withdrawal amount inr", "debitamount", "debit amount", "debitamountinr", "debit amount inr", "dr", "paidout"];
+    internal static readonly string[] CreditColumns = ["credit", "deposit", "depositamt", "deposit amt", "deposit amount", "depositamountinr", "deposit amount inr", "creditamount", "credit amount", "creditamountinr", "credit amount inr", "cr", "paidin"];
     internal static readonly string[] TypeColumns = ["type", "drcr", "dr/cr", "debitcredit", "debit/credit", "crdr", "cr/dr"];
 
     private static readonly HashSet<string> NormalizedDateColumns = DateColumns.Select(NormalizeHeader).ToHashSet(StringComparer.Ordinal);
@@ -58,9 +58,11 @@ internal static partial class StatementParsingSupport
 
     internal static string DetectBank(string fileName, string text)
     {
-        var searchable = NormalizeForSearch(fileName + " " + text);
-        var signature = BankSignatures.FirstOrDefault(x => x.Aliases.Any(searchable.Contains));
-        return signature?.Name ?? "Generic Bank Statement";
+        var fileMatch = MatchBank(fileName);
+        if (fileMatch is not null) return fileMatch;
+
+        var headerText = string.Join('\n', text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Take(25));
+        return MatchBank(headerText) ?? "Generic Bank Statement";
     }
 
     internal static async Task<string> ReadTextAsync(Stream content, int maxChars = 60000, CancellationToken cancellationToken = default)
@@ -234,18 +236,33 @@ internal static partial class StatementParsingSupport
 
     internal static string NormalizeForSearch(string value) => value.ToLowerInvariant().Replace("_", string.Empty).Replace("-", string.Empty).Replace(".", string.Empty);
 
+    private static string? MatchBank(string value)
+    {
+        var searchable = NormalizeForSearch(value);
+        return BankSignatures.FirstOrDefault(x => x.Aliases.Any(alias => searchable.Contains(NormalizeForSearch(alias), StringComparison.OrdinalIgnoreCase)))?.Name;
+    }
+
     private static int FindHeaderIndex(IReadOnlyList<string[]> rows)
     {
         for (var i = 0; i < Math.Min(rows.Count, 40); i++)
         {
             var normalized = rows[i].Select(NormalizeHeader).ToArray();
-            var hasDate = normalized.Any(NormalizedDateColumns.Contains);
-            var hasDescription = normalized.Any(NormalizedDescriptionColumns.Contains);
-            var hasAmount = normalized.Any(NormalizedAmountColumns.Contains);
+            var hasDate = normalized.Any(x => MatchesAnyColumn(x, NormalizedDateColumns));
+            var hasDescription = normalized.Any(x => MatchesAnyColumn(x, NormalizedDescriptionColumns));
+            var hasAmount = normalized.Any(x => MatchesAnyColumn(x, NormalizedAmountColumns));
             if (hasDate && hasDescription && hasAmount) return i;
         }
 
         return -1;
+    }
+
+    private static bool MatchesAnyColumn(string column, IEnumerable<string> aliases) => aliases.Any(alias => MatchesColumn(column, alias));
+
+    private static bool MatchesColumn(string column, string alias)
+    {
+        if (string.IsNullOrWhiteSpace(column) || string.IsNullOrWhiteSpace(alias)) return false;
+        if (column.Equals(alias, StringComparison.Ordinal)) return true;
+        return column.Length > 2 && alias.Length > 2 && (column.Contains(alias, StringComparison.Ordinal) || alias.Contains(column, StringComparison.Ordinal));
     }
 
     private static string Read(string[] parts, Dictionary<string, int> columns, params string[] names)
@@ -253,6 +270,8 @@ internal static partial class StatementParsingSupport
         foreach (var name in names.Select(NormalizeHeader))
         {
             if (columns.TryGetValue(name, out var index) && index < parts.Length) return parts[index].Trim().Trim('"');
+            var fuzzy = columns.FirstOrDefault(x => MatchesColumn(x.Key, name));
+            if (!string.IsNullOrWhiteSpace(fuzzy.Key) && fuzzy.Value < parts.Length) return parts[fuzzy.Value].Trim().Trim('"');
         }
         return string.Empty;
     }
@@ -268,10 +287,19 @@ internal static partial class StatementParsingSupport
         string[] formats =
         [
             "yyyy-MM-dd", "dd-MM-yyyy", "dd/MM/yyyy", "MM/dd/yyyy", "dd-MMM-yyyy", "dd MMM yyyy",
-            "dd/MM/yy", "dd-MM-yy", "MM/dd/yy", "yyyy/MM/dd", "dd.MM.yyyy", "dd.MM.yy"
+            "dd/MM/yy", "dd-MM-yy", "MM/dd/yy", "yyyy/MM/dd", "dd.MM.yyyy", "dd.MM.yy",
+            "dd-MM-yyyy HH:mm:ss", "dd/MM/yyyy HH:mm:ss", "yyyy-MM-dd HH:mm:ss"
         ];
-        return DateOnly.TryParseExact(value.Trim(), formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out date) ||
-               DateOnly.TryParse(value.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.None, out date);
+        var cleaned = value.Trim();
+        if (DateOnly.TryParseExact(cleaned, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out date) ||
+            DateOnly.TryParse(cleaned, CultureInfo.InvariantCulture, DateTimeStyles.None, out date)) return true;
+        if (DateTime.TryParse(cleaned, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dateTime))
+        {
+            date = DateOnly.FromDateTime(dateTime);
+            return true;
+        }
+
+        return false;
     }
 
     private static (decimal Amount, DebitCredit Type) ResolveAmount(string amountText, string debitText, string creditText, string typeText)
@@ -288,7 +316,20 @@ internal static partial class StatementParsingSupport
 
     private static bool TryParseMoney(string value, out decimal amount)
     {
-        var cleaned = value.Replace(",", string.Empty).Replace("INR", string.Empty, StringComparison.OrdinalIgnoreCase).Replace("Rs.", string.Empty, StringComparison.OrdinalIgnoreCase).Replace("?", string.Empty).Trim();
+        var cleaned = value.Replace(",", string.Empty)
+            .Replace("INR", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("Rs.", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("Rs", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("?", string.Empty)
+            .Replace("(", string.Empty)
+            .Replace(")", string.Empty)
+            .Trim();
+        if (string.IsNullOrWhiteSpace(cleaned) || cleaned == "-")
+        {
+            amount = 0;
+            return false;
+        }
+
         var isDebit = cleaned.EndsWith("dr", StringComparison.OrdinalIgnoreCase) || cleaned.StartsWith("-", StringComparison.OrdinalIgnoreCase);
         cleaned = cleaned.Replace("Dr", string.Empty, StringComparison.OrdinalIgnoreCase).Replace("Cr", string.Empty, StringComparison.OrdinalIgnoreCase).Trim();
         var parsed = decimal.TryParse(cleaned, NumberStyles.Any, CultureInfo.InvariantCulture, out amount);

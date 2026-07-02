@@ -59,7 +59,9 @@ public sealed class AiStatementParser(HttpClient httpClient, IOptions<AiOptions>
             {
                 await using var pdfStream = new MemoryStream(bytes);
                 var text = PdfTextStatementParser.ExtractText(pdfStream, maxPages: 0);
-                return new PromptPayload(Trim(text, maxChars), null, null);
+                return string.IsNullOrWhiteSpace(text)
+                    ? new PromptPayload(string.Empty, Convert.ToBase64String(bytes), "application/pdf")
+                    : new PromptPayload(Trim(text, maxChars), null, null);
             }
             catch
             {
@@ -156,4 +158,6 @@ public sealed class AiStatementParser(HttpClient httpClient, IOptions<AiOptions>
 
     private sealed record PromptPayload(string Text, string? Base64, string? MimeType);
 }
+
+
 

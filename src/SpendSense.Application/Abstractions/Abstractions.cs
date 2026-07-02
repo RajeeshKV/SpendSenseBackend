@@ -50,6 +50,7 @@ public interface IEmailService
 public interface IStorageService
 {
     Task<string> SaveAsync(Stream content, string fileName, string contentType, CancellationToken cancellationToken = default);
+    Task<Stream> OpenReadAsync(string storagePath, CancellationToken cancellationToken = default);
     Task DeleteAsync(string storagePath, CancellationToken cancellationToken = default);
 }
 
@@ -69,3 +70,5 @@ public interface IAiService
     Task<string> AnalyzeTransactionsAsync(Guid userId, CancellationToken cancellationToken = default);
     Task<string> ChatAsync(Guid userId, string prompt, CancellationToken cancellationToken = default);
 }
+
+

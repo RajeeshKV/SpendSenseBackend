@@ -48,8 +48,10 @@ public static class DependencyInjection
         services.AddScoped<IStatementParser, PdfTextStatementParser>();
         services.AddHttpClient<AiStatementParser>();
         services.AddScoped<IStatementParser>(sp => sp.GetRequiredService<AiStatementParser>());
+        services.AddScoped<StatementProcessingService>();
         services.AddHostedService<SpendSenseMaintenanceService>();
         services.AddHostedService<MonthlyInsightsService>();
+        services.AddHostedService<StatementProcessingWorker>();
 
         var jwt = configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>() ?? new JwtOptions();
         if (string.IsNullOrWhiteSpace(jwt.Secret) || jwt.Secret.Length < 32)
@@ -75,6 +77,7 @@ public static class DependencyInjection
         return services;
     }
 }
+
 
 
 
