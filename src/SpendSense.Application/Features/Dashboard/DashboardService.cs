@@ -50,18 +50,44 @@ public sealed class DashboardService(IAppDbContext db) : IDashboardService
             .ToList();
     }
 
-    public async Task<IReadOnlyList<MonthlySpend>> MonthlyAsync(Guid userId, CancellationToken cancellationToken = default) =>
-        await db.Transactions.Where(x => x.UserId == userId)
-            .GroupBy(x => new { x.Date.Year, x.Date.Month })
-            .Select(x => new MonthlySpend(x.Key.Year, x.Key.Month, x.Where(t => t.DebitCredit == DebitCredit.Debit).Sum(t => t.Amount), x.Where(t => t.DebitCredit == DebitCredit.Credit).Sum(t => t.Amount)))
-            .OrderBy(x => x.Year).ThenBy(x => x.Month)
+    public async Task<IReadOnlyList<MonthlySpend>> MonthlyAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var totals = await db.Transactions
+            .Where(x => x.UserId == userId)
+            .GroupBy(x => new { x.Date.Year, x.Date.Month, x.DebitCredit })
+            .Select(x => new
+            {
+                x.Key.Year,
+                x.Key.Month,
+                x.Key.DebitCredit,
+                Amount = x.Sum(t => t.Amount)
+            })
             .ToListAsync(cancellationToken);
 
-    public async Task<IReadOnlyList<MerchantSpend>> MerchantsAsync(Guid userId, CancellationToken cancellationToken = default) =>
-        await db.Transactions.Where(x => x.UserId == userId && x.DebitCredit == DebitCredit.Debit)
+        return totals
+            .GroupBy(x => new { x.Year, x.Month })
+            .Select(x => new MonthlySpend(
+                x.Key.Year,
+                x.Key.Month,
+                x.Where(t => t.DebitCredit == DebitCredit.Debit).Sum(t => t.Amount),
+                x.Where(t => t.DebitCredit == DebitCredit.Credit).Sum(t => t.Amount)))
+            .OrderBy(x => x.Year)
+            .ThenBy(x => x.Month)
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<MerchantSpend>> MerchantsAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var totals = await db.Transactions
+            .Where(x => x.UserId == userId && x.DebitCredit == DebitCredit.Debit)
             .GroupBy(x => x.Merchant)
-            .Select(x => new MerchantSpend(x.Key, x.Sum(t => t.Amount)))
+            .Select(x => new { Merchant = x.Key, Amount = x.Sum(t => t.Amount) })
             .OrderByDescending(x => x.Amount)
             .Take(20)
             .ToListAsync(cancellationToken);
+
+        return totals
+            .Select(x => new MerchantSpend(x.Merchant, x.Amount))
+            .ToList();
+    }
 }
