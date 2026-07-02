@@ -43,6 +43,11 @@ public static class DependencyInjection
         services.AddScoped<IStorageService, ResilientStorageService>();
         services.AddScoped<IAiService, ConfiguredAiService>();
         services.AddScoped<IStatementParser, CsvStatementParser>();
+        services.AddScoped<IStatementParser, ExcelStatementParser>();
+        services.AddScoped<IStatementParser, OfxQifStatementParser>();
+        services.AddScoped<IStatementParser, PdfTextStatementParser>();
+        services.AddHttpClient<AiStatementParser>();
+        services.AddScoped<IStatementParser>(sp => sp.GetRequiredService<AiStatementParser>());
         services.AddHostedService<SpendSenseMaintenanceService>();
         services.AddHostedService<MonthlyInsightsService>();
 
@@ -70,5 +75,6 @@ public static class DependencyInjection
         return services;
     }
 }
+
 
 

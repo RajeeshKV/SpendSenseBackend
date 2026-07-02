@@ -14,7 +14,11 @@ public sealed class StatementsController(IStatementService statements) : ApiCont
     {
         await using var stream = file.OpenReadStream();
         var request = new StatementUploadRequest(accountId, accountName, bankName, accountType);
-        return Envelope(await statements.UploadAsync(UserId, request, stream, file.FileName, file.ContentType, file.Length, cancellationToken), "Statement uploaded and parsed.");
+        var result = await statements.UploadAsync(UserId, request, stream, file.FileName, file.ContentType, file.Length, cancellationToken);
+        var message = result.ParseStatus == "Completed"
+            ? "Statement uploaded and parsed."
+            : "Statement uploaded, but parsing failed. Check failureReason for details.";
+        return Envelope(result, message);
     }
 
     [HttpGet]

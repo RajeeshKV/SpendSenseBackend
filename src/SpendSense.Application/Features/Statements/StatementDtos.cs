@@ -4,7 +4,7 @@ using SpendSense.Domain.Enums;
 namespace SpendSense.Application.Features.Statements;
 
 public sealed record StatementUploadRequest(Guid AccountId, string AccountName, string BankName, AccountType AccountType);
-public sealed record StatementResponse(Guid Id, Guid AccountId, string OriginalFileName, string ParseStatus, string? ParserName, DateTime UploadedOnUtc, int TransactionCount);
+public sealed record StatementResponse(Guid Id, Guid AccountId, string OriginalFileName, string ParseStatus, string? ParserName, string? FailureReason, DateTime UploadedOnUtc, int TransactionCount);
 
 public sealed class StatementUploadRequestValidator : AbstractValidator<StatementUploadRequest>
 {

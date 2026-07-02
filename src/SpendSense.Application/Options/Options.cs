@@ -46,6 +46,8 @@ public sealed class AiOptions
     public string ApiKey { get; set; } = string.Empty;
     public string Model { get; set; } = string.Empty;
     public string Endpoint { get; set; } = string.Empty;
+    public bool StatementParsingEnabled { get; set; }
+    public int StatementParsingMaxChars { get; set; } = 60000;
 }
 
 public sealed class StorageOptions
@@ -68,3 +70,4 @@ public sealed class CorsOptions
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToArray();
 }
+
