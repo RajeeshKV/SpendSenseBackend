@@ -10,7 +10,7 @@ public sealed class StatementsController(IStatementService statements) : ApiCont
 {
     [HttpPost("upload")]
     [RequestSizeLimit(25_000_000)]
-    public async Task<ActionResult<ApiResponse<StatementResponse>>> Upload([FromForm] IFormFile file, [FromForm] Guid accountId, [FromForm] string accountName, [FromForm] string bankName, [FromForm] AccountType accountType, CancellationToken cancellationToken)
+    public async Task<ActionResult<ApiResponse<StatementResponse>>> Upload(IFormFile file, [FromForm] Guid accountId, [FromForm] string accountName, [FromForm] string bankName, [FromForm] AccountType accountType, CancellationToken cancellationToken)
     {
         await using var stream = file.OpenReadStream();
         var request = new StatementUploadRequest(accountId, accountName, bankName, accountType);

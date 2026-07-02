@@ -48,9 +48,11 @@ app.UseCors("Default");
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
+app.MapGet("/", () => Results.Ok(new { name = "SpendSense API", status = "Live", swagger = "/swagger", health = "/health" }));
 app.MapHealthChecks("/health");
 app.MapControllers().RequireRateLimiting("api");
 app.Run();
 
 public partial class Program;
+
 
