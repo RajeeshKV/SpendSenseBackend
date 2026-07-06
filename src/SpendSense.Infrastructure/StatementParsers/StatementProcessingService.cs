@@ -13,6 +13,23 @@ internal sealed class StatementProcessingService(AppDbContext db, IStorageServic
 {
     public async Task ProcessAsync(Guid statementId, CancellationToken cancellationToken = default)
     {
+        try
+        {
+            await ProcessCoreAsync(statementId, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Background statement processing failed for statement {StatementId}. Marking the statement as failed.", statementId);
+            await MarkFailedAsync(statementId, $"Statement processing failed: {ex.Message}", cancellationToken);
+        }
+    }
+
+    private async Task ProcessCoreAsync(Guid statementId, CancellationToken cancellationToken)
+    {
         var statement = await db.Statements.Include(x => x.Account).FirstOrDefaultAsync(x => x.Id == statementId && !x.IsDeleted, cancellationToken);
         if (statement is null) return;
 
@@ -65,6 +82,19 @@ internal sealed class StatementProcessingService(AppDbContext db, IStorageServic
 
         statement.ParseStatus = StatementParseStatus.Failed;
         statement.FailureReason = "Unable to extract transactions. Attempts: " + string.Join("; ", attempts);
+        statement.ModifiedOnUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task MarkFailedAsync(Guid statementId, string reason, CancellationToken cancellationToken)
+    {
+        db.ChangeTracker.Clear();
+
+        var statement = await db.Statements.FirstOrDefaultAsync(x => x.Id == statementId && !x.IsDeleted, cancellationToken);
+        if (statement is null) return;
+
+        statement.ParseStatus = StatementParseStatus.Failed;
+        statement.FailureReason = reason;
         statement.ModifiedOnUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
     }
