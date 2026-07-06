@@ -186,20 +186,45 @@ internal sealed class CloudinaryStorageProvider(HttpClient httpClient, IOptions<
             throw new InvalidOperationException($"Cloudinary upload failed: {result.Error.Message}");
         }
 
-        var readableLocation = result.SecureUrl?.AbsoluteUri ?? result.Url?.AbsoluteUri ?? result.PublicId;
-        return $"Cloudinary:{readableLocation}";
+        return $"Cloudinary:{result.PublicId}";
     }
 
     public async Task<Stream> OpenReadAsync(string storagePath, CancellationToken cancellationToken = default)
     {
         var location = storagePath.StartsWith("Cloudinary:", StringComparison.OrdinalIgnoreCase) ? storagePath[11..] : storagePath;
-        if (!Uri.TryCreate(location, UriKind.Absolute, out var uri))
+        var publicId = ResolvePublicId(location);
+        var account = new Account(_options.CloudName, _options.ApiKey, _options.ApiSecret);
+        var cloudinary = new Cloudinary(account);
+        var expiresAt = DateTimeOffset.UtcNow.AddMinutes(10).ToUnixTimeSeconds();
+        var downloadUrl = cloudinary.DownloadPrivate(publicId, false, null, "authenticated", expiresAt, "raw", null, null);
+
+        using var response = await httpClient.GetAsync(downloadUrl, cancellationToken);
+        if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException("This Cloudinary file was saved before readable URLs were stored. Re-upload the statement to process it asynchronously.");
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new HttpRequestException($"Cloudinary download failed with {(int)response.StatusCode} {response.StatusCode}: {body}", null, response.StatusCode);
         }
 
-        var bytes = await httpClient.GetByteArrayAsync(uri, cancellationToken);
+        var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
         return new MemoryStream(bytes, writable: false);
+    }
+
+    private static string ResolvePublicId(string location)
+    {
+        if (!Uri.TryCreate(location, UriKind.Absolute, out var uri)) return location;
+
+        var marker = "/raw/authenticated/";
+        var path = uri.AbsolutePath;
+        var markerIndex = path.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (markerIndex < 0) return Path.GetFileNameWithoutExtension(path);
+
+        var publicIdPath = path[(markerIndex + marker.Length)..];
+        var segments = publicIdPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var firstPublicIdSegment = 0;
+        if (segments.Length > 0 && segments[0].StartsWith("s--", StringComparison.OrdinalIgnoreCase)) firstPublicIdSegment++;
+        if (segments.Length > firstPublicIdSegment && segments[firstPublicIdSegment].Length > 1 && segments[firstPublicIdSegment][0] == 'v' && segments[firstPublicIdSegment][1..].All(char.IsDigit)) firstPublicIdSegment++;
+
+        return Uri.UnescapeDataString(string.Join('/', segments.Skip(firstPublicIdSegment)));
     }
 
     public Task DeleteAsync(string storagePath, CancellationToken cancellationToken = default) => Task.CompletedTask;

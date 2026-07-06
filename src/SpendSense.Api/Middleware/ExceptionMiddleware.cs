@@ -1,37 +1,77 @@
 using System.Net;
 using FluentValidation;
+using Microsoft.AspNetCore.Diagnostics;
 using SpendSense.Shared;
 
 namespace SpendSense.Api.Middleware;
 
-public sealed class ExceptionMiddleware(RequestDelegate next, ILogger<ExceptionMiddleware> logger)
+public sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IExceptionHandler
 {
-    public async Task InvokeAsync(HttpContext context)
+    public async ValueTask<bool> TryHandleAsync(HttpContext context, Exception exception, CancellationToken cancellationToken)
     {
-        try
+        if (context.Response.HasStarted)
         {
-            await next(context);
+            logger.LogWarning(exception,
+                "Unable to write error response because the response has already started. Method: {Method}, Path: {Path}, CorrelationId: {CorrelationId}",
+                context.Request.Method,
+                context.Request.Path,
+                context.TraceIdentifier);
+            return false;
         }
-        catch (ValidationException ex)
-        {
-            context.Response.StatusCode = (int)HttpStatusCode.BadRequest;
-            await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail("Validation failed.", ex.Errors.Select(x => x.ErrorMessage), context.TraceIdentifier));
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            context.Response.StatusCode = (int)HttpStatusCode.Unauthorized;
-            await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail(ex.Message, null, context.TraceIdentifier));
-        }
-        catch (InvalidOperationException ex)
-        {
-            context.Response.StatusCode = (int)HttpStatusCode.BadRequest;
-            await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail(ex.Message, null, context.TraceIdentifier));
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Unhandled request failure.");
-            context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
-            await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail("An unexpected error occurred.", null, context.TraceIdentifier));
-        }
+
+        var error = ResolveError(exception, context.RequestAborted.IsCancellationRequested);
+        LogException(context, exception, error.StatusCode);
+
+        context.Response.Clear();
+        context.Response.StatusCode = (int)error.StatusCode;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsJsonAsync(
+            ApiResponse<object>.Fail(error.Message, error.Errors, context.TraceIdentifier),
+            cancellationToken);
+
+        return true;
     }
+
+    private static ApiError ResolveError(Exception exception, bool requestAborted) => exception switch
+    {
+        OperationCanceledException when requestAborted => new ApiError((HttpStatusCode)499, "Request was cancelled by the client."),
+        ValidationException validationException => new ApiError(HttpStatusCode.BadRequest, "Validation failed.", validationException.Errors.Select(x => x.ErrorMessage)),
+        BadHttpRequestException badHttpRequestException => new ApiError((HttpStatusCode)badHttpRequestException.StatusCode, badHttpRequestException.Message),
+        UnauthorizedAccessException unauthorizedAccessException => new ApiError(HttpStatusCode.Unauthorized, unauthorizedAccessException.Message),
+        KeyNotFoundException keyNotFoundException => new ApiError(HttpStatusCode.NotFound, keyNotFoundException.Message),
+        InvalidOperationException invalidOperationException => new ApiError(HttpStatusCode.BadRequest, invalidOperationException.Message),
+        _ => new ApiError(HttpStatusCode.InternalServerError, "An unexpected error occurred.")
+    };
+
+    private void LogException(HttpContext context, Exception exception, HttpStatusCode statusCode)
+    {
+        var status = (int)statusCode;
+        var userId = context.User.FindFirst("sub")?.Value
+            ?? context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+            ?? "anonymous";
+
+        if (status >= StatusCodes.Status500InternalServerError)
+        {
+            logger.LogError(exception,
+                "Request failed with unhandled exception. StatusCode: {StatusCode}, Method: {Method}, Path: {Path}, QueryString: {QueryString}, UserId: {UserId}, CorrelationId: {CorrelationId}",
+                status,
+                context.Request.Method,
+                context.Request.Path,
+                context.Request.QueryString.Value,
+                userId,
+                context.TraceIdentifier);
+            return;
+        }
+
+        logger.LogWarning(exception,
+            "Request failed with handled exception. StatusCode: {StatusCode}, Method: {Method}, Path: {Path}, QueryString: {QueryString}, UserId: {UserId}, CorrelationId: {CorrelationId}",
+            status,
+            context.Request.Method,
+            context.Request.Path,
+            context.Request.QueryString.Value,
+            userId,
+            context.TraceIdentifier);
+    }
+
+    private sealed record ApiError(HttpStatusCode StatusCode, string Message, IEnumerable<string>? Errors = null);
 }
